@@ -366,3 +366,34 @@ async fn test_lookup_service_with_client() {
         "The default client should not be accepted by the mock server {response:#?}"
     );
 }
+
+#[maybe_async::test(feature = "blocking", async(not(feature = "blocking"), tokio::test))]
+#[serial]
+async fn test_perform_lookup_with_client() {
+    // Start a local mock server that only accepts the caller-supplied client
+    #[cfg(not(feature = "blocking"))]
+    let server = setup_mock_server_expecting_custom_client().await;
+    #[cfg(feature = "blocking")]
+    let (_rt, server) = setup_mock_server_expecting_custom_client();
+
+    let provider = LookupProvider::Mock("1.1.1.1".to_string(), server.uri());
+    let client = custom_client();
+
+    let response = perform_lookup_with_client(&client, vec![(provider.clone(), None)], None).await;
+    assert!(
+        response.is_ok(),
+        "The caller-supplied client should have performed the request {response:#?}"
+    );
+    assert_eq!(
+        response.unwrap().ip,
+        ip("1.1.1.1"),
+        "IP address not matching"
+    );
+
+    // A default client does not carry the setting, so the same server rejects it
+    let response = perform_lookup_with(vec![(provider, None)], None).await;
+    assert!(
+        response.is_err(),
+        "The default client should not be accepted by the mock server {response:#?}"
+    );
+}
