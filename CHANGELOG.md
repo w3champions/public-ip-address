@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### 📚 Documentation
+
+- Document the caller-supplied client API
+
 ## [0.3.5] - 2025-06-28
 
 ### 🚀 Features
