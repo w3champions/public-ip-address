@@ -279,6 +279,7 @@ impl Parameters {
 pub struct LookupService {
     provider: Box<dyn Provider + Send + Sync>,
     parameters: Option<Parameters>,
+    client: Option<Client>,
 }
 
 impl LookupService {
@@ -287,6 +288,31 @@ impl LookupService {
         LookupService {
             provider: provider.build(),
             parameters,
+            client: None,
+        }
+    }
+
+    /// Creates a new `LookupService` instance that sends its request with `client`.
+    ///
+    /// The client is cloned, which is cheap: `reqwest` clients share one
+    /// connection pool behind an `Arc`.
+    ///
+    /// # Example
+    /// ```
+    /// use public_ip_address::lookup::{Client, LookupProvider, LookupService};
+    ///
+    /// let client = Client::builder().no_proxy().build().unwrap();
+    /// let service = LookupService::with_client(LookupProvider::IpApiCom, None, &client);
+    /// ```
+    pub fn with_client(
+        provider: LookupProvider,
+        parameters: Option<Parameters>,
+        client: &Client,
+    ) -> Self {
+        LookupService {
+            provider: provider.build(),
+            parameters,
+            client: Some(client.clone()),
         }
     }
 
@@ -325,7 +351,13 @@ impl LookupService {
     #[maybe_async::maybe_async]
     async fn make_api_request(&self, target: Option<IpAddr>) -> Result<String> {
         let key = self.parameters.as_ref().map(|p| p.api_key.clone());
-        let response = self.provider.get_client(key, target).send().await;
+        // Without a caller-supplied client, go through `get_client` so that
+        // providers overriding it keep working exactly as before.
+        let request = match self.client {
+            Some(ref client) => self.provider.get_client_with(client, key, target),
+            None => self.provider.get_client(key, target),
+        };
+        let response = request.send().await;
         handle_response(response).await
     }
 }
