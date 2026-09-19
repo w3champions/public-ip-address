@@ -21,7 +21,12 @@
 //! ```
 
 use crate::LookupResponse;
-use client::{Client, RequestBuilder, Response};
+/// Re-exported `reqwest` types used by the [`Provider`] and [`LookupService`] APIs.
+///
+/// These follow the build: they are the asynchronous `reqwest` types by default, and the
+/// `reqwest::blocking` ones when the `blocking` feature is enabled. A caller-supplied
+/// [`Client`] is therefore always the kind the crate itself uses internally.
+pub use client::{Client, RequestBuilder, Response};
 use error::{LookupError, Result};
 use reqwest::StatusCode;
 use serde::de::DeserializeOwned;
@@ -62,10 +67,24 @@ pub trait Provider {
     /// Returns the type enum of the provider
     fn get_type(&self) -> LookupProvider;
 
+    /// Returns a request builder for the provider, built from the given client.
+    ///
+    /// Callers that need control over the transport - a proxy or an explicit
+    /// `no_proxy()`, a custom timeout, or a shared connection pool - build the
+    /// client themselves and pass it in here.
+    fn get_client_with(
+        &self,
+        client: &Client,
+        key: Option<String>,
+        target: Option<IpAddr>,
+    ) -> RequestBuilder {
+        let request = client.get(self.get_endpoint(&key, &target));
+        self.add_auth(request, &key)
+    }
+
     /// Returns a request client for the provider
     fn get_client(&self, key: Option<String>, target: Option<IpAddr>) -> RequestBuilder {
-        let client = Client::new().get(self.get_endpoint(&key, &target));
-        self.add_auth(client, &key)
+        self.get_client_with(&Client::new(), key, target)
     }
 
     /// Add authentication header to the request
@@ -336,6 +355,19 @@ mod tests {
     use super::*;
     use crate::lookup::mock::helper::setup_mock_server;
     use serial_test::serial;
+
+    #[test]
+    fn test_get_client_with_builds_the_provider_request() {
+        let client = Client::builder().no_proxy().build().unwrap();
+        let request = crate::lookup::ipapicom::IpApiCom
+            .get_client_with(&client, None, None)
+            .build()
+            .unwrap();
+        assert_eq!(
+            request.url().as_str(),
+            "http://ip-api.com/json/?fields=66846719"
+        );
+    }
 
     #[maybe_async::test(feature = "blocking", async(not(feature = "blocking"), tokio::test))]
     async fn test_make_request() {
