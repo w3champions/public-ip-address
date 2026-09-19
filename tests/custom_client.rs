@@ -5,6 +5,7 @@
 //! receives the full request and can answer it with a canned body.
 
 use public_ip_address::lookup::{Client, LookupProvider, LookupService};
+use public_ip_address::perform_lookup_with_client;
 use reqwest::Proxy;
 use serial_test::serial;
 use std::io::{Read, Write};
@@ -67,4 +68,79 @@ async fn test_lookup_service_with_client_uses_the_given_client() {
 
     assert_eq!(response.ip, "203.0.113.7".parse::<IpAddr>().unwrap());
     assert_eq!(hits.load(Ordering::SeqCst), 1);
+}
+
+#[maybe_async::test(feature = "blocking", async(not(feature = "blocking"), tokio::test))]
+#[serial]
+async fn test_perform_lookup_with_client_uses_the_given_client() {
+    let (addr, hits) = spawn_http_server(IP_API_COM_BODY);
+    let client = Client::builder()
+        .proxy(Proxy::http(format!("http://{}", addr)).expect("proxy url"))
+        .timeout(Duration::from_secs(5))
+        .build()
+        .expect("build client");
+
+    let response =
+        perform_lookup_with_client(&client, vec![(LookupProvider::IpApiCom, None)], None)
+            .await
+            .expect("lookup succeeds against the loopback server");
+
+    assert_eq!(
+        response.ip,
+        "203.0.113.7".parse::<IpAddr>().unwrap(),
+        "the canned body was not the one parsed"
+    );
+    assert_eq!(response.country_code.as_deref(), Some("NL"));
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        1,
+        "the caller-supplied client was not used"
+    );
+}
+
+#[maybe_async::test(feature = "blocking", async(not(feature = "blocking"), tokio::test))]
+#[serial]
+async fn test_no_proxy_client_ignores_the_environment_proxy() {
+    let (addr, hits) = spawn_http_server(IP_API_COM_BODY);
+    std::env::set_var("HTTP_PROXY", format!("http://{}", addr));
+    std::env::set_var("http_proxy", format!("http://{}", addr));
+
+    // Control: a default client honours HTTP_PROXY, so it lands on our server.
+    let default_client = Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .expect("build default client");
+    let response = perform_lookup_with_client(
+        &default_client,
+        vec![(LookupProvider::IpApiCom, None)],
+        None,
+    )
+    .await;
+    let control_hits = hits.load(Ordering::SeqCst);
+
+    // The client the launcher builds: no proxy, ever.
+    let no_proxy_client = Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .expect("build no_proxy client");
+    // Online this reaches the real provider, offline it errors; either way it
+    // must not touch the proxy the environment advertises.
+    let _ = perform_lookup_with_client(
+        &no_proxy_client,
+        vec![(LookupProvider::IpApiCom, None)],
+        None,
+    )
+    .await;
+    let after_hits = hits.load(Ordering::SeqCst);
+
+    std::env::remove_var("HTTP_PROXY");
+    std::env::remove_var("http_proxy");
+
+    assert!(response.is_ok(), "control lookup failed: {:?}", response);
+    assert_eq!(control_hits, 1, "the environment proxy was not honoured");
+    assert_eq!(
+        after_hits, control_hits,
+        "the no_proxy() client used the environment proxy"
+    );
 }
