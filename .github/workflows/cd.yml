@@ -5,6 +5,12 @@ on:
     tags:
       - "v*.*.*"
 
+# Never cancel a running release. Each tag is its own ref, so this only keeps a
+# re-run from racing the original publish of the same tag.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   cargo-publish:
     name: Publish crates.io

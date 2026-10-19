@@ -16,6 +16,11 @@ on:
     # The branches below must be a subset of the branches above
     branches: [ "main" ]
 
+# A newer push to the same PR or branch makes the running checks obsolete. Cancel them.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   rust-clippy-analyze:
     name: Run rust-clippy analyzing
